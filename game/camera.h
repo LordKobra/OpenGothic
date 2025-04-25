@@ -67,6 +67,7 @@ class Camera final {
     bool isMarvin() const;
     bool isFree() const;
     bool isInWater() const;
+    float getWaterHeight() const;
     bool isCutscene() const;
 
     void setToggleEnable(bool e);
@@ -156,6 +157,7 @@ class Camera final {
     Mode                  camMod        = Normal;
     MarvinMode            camMarvinMod  = M_Normal;
     bool                  inWater       = false;
+    float                 waterHeight   = 0.0;
 
     mutable int           raysCasted = 0;
 

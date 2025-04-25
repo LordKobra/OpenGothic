@@ -195,6 +195,10 @@ bool Camera::isInWater() const {
   return inWater;
   }
 
+float Camera::getWaterHeight() const {
+  return waterHeight;
+}
+
 bool Camera::isCutscene() const {
   return camMod==Camera::Mode::Cutscene;
   }
@@ -649,9 +653,13 @@ void Camera::tick(uint64_t dt) {
 
   auto world = Gothic::inst().world();
   if(world!=nullptr) {
-    if(auto pl = world->player()) {
+    if(world->player()) {
       auto& physic = *world->physic();
-      if(pl->isDive()) {
+      auto water_pos = physic.waterRay(prev, origin);
+      if(water_pos.hasCol)
+        waterHeight = water_pos.wdepth;
+      inWater = inWater != water_pos.hasCol;
+      /*if(pl->isDive()) {
         inWater = !physic.waterRay(src.target, origin).hasCol;
         }
       else if(pl->isInWater()) {
@@ -660,7 +668,7 @@ void Camera::tick(uint64_t dt) {
         }
       else {
         inWater = physic.waterRay(src.target, origin).hasCol;
-        }
+        }*/
       }
     }
   }

@@ -80,6 +80,7 @@ Shaders::Shaders() {
 
   underwaterT        = inWaterShader("underwater_t", false);
   underwaterS        = inWaterShader("underwater_s", true);
+  underwaterC        = computeShader("underwater_c.comp.sprv");
   waterReflection    = reflectionShader("water_reflection.frag.sprv",meshlets);
   waterReflectionSSR = reflectionShader("water_reflection_ssr.frag.sprv",meshlets);
 

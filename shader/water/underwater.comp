@@ -1,0 +1,90 @@
+#version 460
+
+//#extension GL_EXT_control_flow_attributes : enable
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_EXT_shader_image_load_formatted : require 
+
+#include "scene.glsl"
+#include "common.glsl" 
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0, std140) uniform   UboScene {
+  SceneDesc scene;
+  };
+layout(binding = 1) uniform           sampler2D zbuffer;
+layout(binding = 2) uniform           texture2D in_color;
+layout(binding = 3) uniform writeonly image2D   out_color;
+
+layout(push_constant, std140) uniform PushConstant {
+  float waterHeight;
+  } push;
+// fixme: copy-paste
+vec4 waterScatter(vec3 normal,vec3 camPos, vec3 wPos, vec3 dir, const float len, vec3 color) {
+  const float surface_pos = push.waterHeight; // here we require the last tracked water intersection from the camera
+  const float depth       = len / 100.0; // 1 = 1m
+  const vec3  ndir        = dir/length(dir);
+  const float angle = 1.0 - acos(ndir.y) / M_PI;
+
+  const float camera_depth = (surface_pos-camPos.y) / 100.0;
+  float surface_depth = (surface_pos-wPos.y) / 100.0;
+  surface_depth = surface_depth < 0.0 ? 0.0 : surface_depth;
+  // some assumptions:
+  // 700 nm (red), 546.1 nm (green) and 435.8 nm (blue)
+  // clear ocean water https://opg.optica.org/ao/fulltext.cfm?uri=ao-20-2-177&id=24568
+  const vec3 c_ocean = vec3(0.65, 0.06, 0.024);
+  const vec3 c_clear = vec3(0.65, 0.073, 0.047);
+  const vec3 c = c_clear;
+  const vec3 posSurfTransmittance = exp(-(surface_depth * c));
+  const vec3 posCamTransmittance = exp(-(depth * c));
+
+  // sun transmittance
+  // Note: calculate reflectance lux loss before entering water
+  // Note: Sun currently not visible while underwater (bug)
+  // Note: add caustics
+  const vec3 sun_transmittance = color * posSurfTransmittance * posCamTransmittance;
+  
+  // scatter
+  // Note: cone shaped variant ends up with 1/3 height (ambient)
+  // Note: add sun scatter + refraction, separate ambient scatter
+  // Note: use correct light values, check exposure
+  // Note: Check diffuse downdwelling coefficient to replace scatter_mult:
+  //       https://onlinelibrary.wiley.com/doi/10.1111/cgf.15009
+  const float scatter_mult = 3.0;
+  const float v = ndir.y == 0 ? -0.001 : -ndir.y * scatter_mult;
+  const float x = depth;
+  const float h_1 = camera_depth * scatter_mult;
+  vec3 scatter_intensity = -exp(-c * (v * x + x + h_1));
+  scatter_intensity     +=  exp(-c * h_1);
+  scatter_intensity     /= c * v + c;
+  const vec3 scatter_light = 1.0 * 0.01 * scatter_intensity;
+
+  // ambient
+  const vec3 posCamAmbTransmittance = exp(-(3 * depth * vec3(0.15,0.10,0.05)));
+  const vec3 ambient_transmittance = color * posCamAmbTransmittance;
+
+  return vec4(sun_transmittance+scatter_light, 1.0);
+  }
+
+vec3 unproject(vec4 screen) {
+  const vec4 pos4 = scene.viewProjectInv * screen;
+  return pos4.xyz/pos4.w;
+  }
+
+void main(){
+  const ivec2 pos = ivec2(gl_GlobalInvocationID.xy);
+
+  const vec2  ndcPos    = (pos.xy * scene.screenResInv) * 2.0 - vec2(1.0);
+  const float depth     = texelFetch(zbuffer,  pos, 0).r;
+
+  const vec3  camPos    = unproject(vec4(0.0, 0.0, 0.0, 1.0));
+  const vec3  wPos      = unproject(vec4(ndcPos.x, ndcPos.y, depth, 1.0));
+
+  const vec3 wDir = wPos-camPos;
+  const float len = length(wPos-camPos);
+
+  vec3 color = texelFetch(in_color, pos, 0).rgb;
+  color = waterScatter(vec3(0.0 ,1.0 ,0.0), camPos, wPos, wDir, len, color).rgb;
+  imageStore(out_color, pos, vec4(color,1.0));
+
+ }

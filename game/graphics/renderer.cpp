@@ -115,7 +115,8 @@ void Renderer::resetSwapchain() {
   const uint32_t h      = uint32_t(res.h);
   const uint32_t smSize = settings.shadowResolution;
 
-  sceneLinear = device.attachment(TextureFormat::R11G11B10UF,w,h);
+  sceneLinear   = device.attachment(TextureFormat::R11G11B10UF,w,h);
+  storageLinear = device.image2d(TextureFormat::R11G11B10UF,w,h);
 
   if(settings.aaEnabled) {
     cmaa2.workingEdges               = device.image2d(TextureFormat::R8, (w + 1) / 2, h);
@@ -598,7 +599,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   drawReflections(cmd, *wview);
   if(camera->isInWater()) {
     cmd.setDebugMarker("Underwater");
-    drawUnderwater(cmd, *wview);
+    drawUnderwater(cmd, *wview, camera->getWaterHeight());
     } else {
     cmd.setDebugMarker("Fog");
     drawFog(cmd, *wview);
@@ -1405,14 +1406,27 @@ void Renderer::drawReflections(Encoder<CommandBuffer>& cmd, const WorldView& wvi
     }
   }
 
-void Renderer::drawUnderwater(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
+void Renderer::drawUnderwater(Encoder<CommandBuffer>& cmd, const WorldView& wview, float waterHeight) {
+  cmd.setFramebuffer({});
+
   cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
   cmd.setBinding(1, zbuffer);
+  cmd.setBinding(2, sceneLinear);
+  cmd.setBinding(3, storageLinear);
+  struct Push { float waterHeight;} push = {};
+  push.waterHeight = waterHeight;
+  cmd.setPushData(&push, sizeof(push));
+  cmd.setPipeline(shaders.underwaterC);
+  cmd.dispatchThreads(storageLinear.size());
 
-  cmd.setPipeline(shaders.underwaterT);
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
+  cmd.setBinding(0, storageLinear);
+  cmd.setPipeline(shaders.copy);
   cmd.draw(Resources::fsqVbo());
-  cmd.setPipeline(shaders.underwaterS);
-  cmd.draw(Resources::fsqVbo());
+  // cmd.setPipeline(shaders.underwaterT);
+  // cmd.draw(Resources::fsqVbo());
+  // cmd.setPipeline(shaders.underwaterS);
+  // cmd.draw(Resources::fsqVbo());
   }
 
 void Renderer::drawShadowMap(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& view) {
