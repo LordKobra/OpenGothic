@@ -15,6 +15,7 @@ layout(binding = 0, std140) uniform   UboScene {
 layout(binding = 1) uniform           sampler2D zbuffer;
 layout(binding = 2) uniform           texture2D in_color;
 layout(binding = 3) uniform writeonly image2D   out_color;
+layout(binding = 4) uniform           texture2D waterCaustic;
 
 layout(push_constant, std140) uniform PushConstant {
   float waterHeight;
@@ -38,13 +39,25 @@ vec4 waterScatter(vec3 normal,vec3 camPos, vec3 wPos, vec3 dir, const float len,
   const vec3 posSurfTransmittance = exp(-(surface_depth * c));
   const vec3 posCamTransmittance = exp(-(depth * c));
 
-  // sun transmittance
-  // Note: calculate reflectance lux loss before entering water
+  // back color transmittance
+  // Note: calculate reflectance lux loss before entering water (fresnel)
   // Note: Sun currently not visible while underwater (bug)
   // Note: add caustics
-  const vec3 sun_transmittance = color * posSurfTransmittance * posCamTransmittance;
-  
+  // Todo: Make caustic texture a sampler
+
+  const vec2 surface_sunpos = wPos.xz + scene.sunDir.xz * surface_depth * 100 / abs(scene.sunDir.y);
+  vec3 caustic = texelFetch(waterCaustic, ivec2((surface_sunpos.xy+vec2(0,0)   + scene.tickCount32 / 20.0)* 0.4) % ivec2(768,768), 0 ).rgb;
+  //caustic     *= texelFetch(waterCaustic, ivec2((surface_sunpos.xy+vec2(255,0) + scene.tickCount32 / 30.0)* 0.4) % ivec2(768,768), 0 ).rgb;
+  caustic     *= texelFetch(waterCaustic, ivec2((surface_sunpos.yx+vec2(375,0) - scene.tickCount32 / 20.0)* 0.4) % ivec2(768,768), 0 ).rgb;
+  //caustic     *= texelFetch(waterCaustic, ivec2((surface_sunpos.yx+vec2(444,0) - scene.tickCount32 / 30.0)* 0.4) % ivec2(768,768), 0 ).rgb;
+  //caustic      = exp(-1.0 + sqrt((caustic))) - exp(-1);
+  caustic      = 0.70+14*caustic;
+  caustic      = surface_depth < 1.0 ? surface_depth * caustic + (1-surface_depth).xxx : caustic;
+  caustic      = gl_GlobalInvocationID.x > 2000 ? vec3(1) : caustic;
+
+  const vec3 background_transmittance = color * posSurfTransmittance * posCamTransmittance * scene.sunColor * scene.exposure * caustic;
   // scatter
+  // Note: flat water gradient looked better with high scatter mult / deep with final mult
   // Note: cone shaped variant ends up with 1/3 height (ambient)
   // Note: add sun scatter + refraction, separate ambient scatter
   // Note: use correct light values, check exposure
@@ -57,13 +70,20 @@ vec4 waterScatter(vec3 normal,vec3 camPos, vec3 wPos, vec3 dir, const float len,
   vec3 scatter_intensity = -exp(-c * (v * x + x + h_1));
   scatter_intensity     +=  exp(-c * h_1);
   scatter_intensity     /= c * v + c;
-  const vec3 scatter_light = 1.0 * 0.01 * scatter_intensity;
+  const vec3 scatter_light = scene.ambient * scene.exposure * 0.2 * scatter_intensity;
+
+  // const float v2 = ndir.y == 0 ? -0.001 : -ndir.y;
+  // const float h_2 = camera_depth; // * sundir
+  // vec3 scatter_intensity = -exp(-c * (v * x + x + h_1));
+  // scatter_intensity     +=  exp(-c * h_1);
+  // scatter_intensity     /= c * v + c;
+  // const vec3 scatter_light = scene.ambient * scene.exposure * 0.2 * scatter_intensity;
 
   // ambient
   const vec3 posCamAmbTransmittance = exp(-(3 * depth * vec3(0.15,0.10,0.05)));
   const vec3 ambient_transmittance = color * posCamAmbTransmittance;
 
-  return vec4(sun_transmittance+scatter_light, 1.0);
+  return vec4(background_transmittance+scatter_light, 1.0);
   }
 
 vec3 unproject(vec4 screen) {
@@ -85,6 +105,8 @@ void main(){
 
   vec3 color = texelFetch(in_color, pos, 0).rgb;
   color = waterScatter(vec3(0.0 ,1.0 ,0.0), camPos, wPos, wDir, len, color).rgb;
+  //const vec3 wc         = texelFetch(waterCaustic,  pos % ivec2(768,768), 0).rgb;
+  //color = wc;
   imageStore(out_color, pos, vec4(color,1.0));
 
  }

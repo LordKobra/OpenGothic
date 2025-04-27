@@ -99,6 +99,8 @@ Renderer::Renderer(Tempest::Swapchain& swapchain)
   sky.viewCldLut    = device.attachment(Tempest::TextureFormat::RGBA32F, 512, 256);
   sky.irradianceLut = device.image2d(TextureFormat::RGBA32F, 3,2);
 
+  water.waterCaustic = device.texture("HQCaustics.png");
+
   setupSettings();
   }
 
@@ -1413,6 +1415,7 @@ void Renderer::drawUnderwater(Encoder<CommandBuffer>& cmd, const WorldView& wvie
   cmd.setBinding(1, zbuffer);
   cmd.setBinding(2, sceneLinear);
   cmd.setBinding(3, storageLinear);
+  cmd.setBinding(4, water.waterCaustic);
   struct Push { float waterHeight;} push = {};
   push.waterHeight = waterHeight;
   cmd.setPushData(&push, sizeof(push));

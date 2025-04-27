@@ -151,6 +151,10 @@ class Renderer final {
       Tempest::StorageImage  occlusionLut, irradianceLut;
       } sky;
 
+    struct Water {
+      Tempest::Texture2d waterCaustic;
+      } water;
+
     struct SSAO {
       Tempest::TextureFormat    aoFormat = Tempest::TextureFormat::R8;
       Tempest::StorageImage     ssaoBuf;
