@@ -100,6 +100,8 @@ Renderer::Renderer(Tempest::Swapchain& swapchain)
   sky.irradianceLut = device.image2d(TextureFormat::RGBA32F, 3,2);
 
   water.waterCaustic = device.texture("HQCaustics.png");
+  water.waterCausticLayered = device.attachment(Tempest::TextureFormat::RGBA8, 768, 768);
+  water.waterCausticLayeredHalfRes = device.attachment(Tempest::TextureFormat::RGBA8, 384, 384);
 
   setupSettings();
   }
@@ -1409,19 +1411,34 @@ void Renderer::drawReflections(Encoder<CommandBuffer>& cmd, const WorldView& wvi
   }
 
 void Renderer::drawUnderwater(Encoder<CommandBuffer>& cmd, const WorldView& wview, float waterHeight) {
-  cmd.setFramebuffer({});
+  // Layering
+  cmd.setFramebuffer({{water.waterCausticLayered, Tempest::Preserve, Tempest::Preserve}});
+  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
+  cmd.setBinding(1, water.waterCaustic);
+  cmd.setPipeline(shaders.prepareWater);
+  cmd.draw(Resources::fsqVbo());
 
+  // Downsampling
+  cmd.setFramebuffer({{water.waterCausticLayeredHalfRes, Tempest::Preserve, Tempest::Preserve}});
+  cmd.setBinding(0, water.waterCausticLayered);
+  cmd.setPipeline(shaders.copy);
+  cmd.draw(Resources::fsqVbo());
+
+  // Compute Shader
+  cmd.setFramebuffer({});
   cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
   cmd.setBinding(1, zbuffer);
   cmd.setBinding(2, sceneLinear);
   cmd.setBinding(3, storageLinear);
-  cmd.setBinding(4, water.waterCaustic);
+  cmd.setBinding(4, water.waterCausticLayered, Sampler::bilinear(ClampMode::Repeat));
+  cmd.setBinding(5, water.waterCausticLayeredHalfRes, Sampler::bilinear(ClampMode::Repeat));
   struct Push { float waterHeight;} push = {};
   push.waterHeight = waterHeight;
   cmd.setPushData(&push, sizeof(push));
   cmd.setPipeline(shaders.underwaterC);
   cmd.dispatchThreads(storageLinear.size());
 
+  // Copy to backbuffer
   cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
   cmd.setBinding(0, storageLinear);
   cmd.setPipeline(shaders.copy);

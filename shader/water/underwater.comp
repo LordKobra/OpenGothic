@@ -15,20 +15,25 @@ layout(binding = 0, std140) uniform   UboScene {
 layout(binding = 1) uniform           sampler2D zbuffer;
 layout(binding = 2) uniform           texture2D in_color;
 layout(binding = 3) uniform writeonly image2D   out_color;
-layout(binding = 4) uniform           texture2D waterCaustic;
+layout(binding = 4) uniform           sampler2D waterCaustic;
+layout(binding = 5) uniform           sampler2D waterCausticHR;
 
 layout(push_constant, std140) uniform PushConstant {
   float waterHeight;
   } push;
 // fixme: copy-paste
-vec4 waterScatter(vec3 normal,vec3 camPos, vec3 wPos, vec3 dir, const float len, vec3 color) {
-  const float surface_pos = push.waterHeight; // here we require the last tracked water intersection from the camera
-  const float depth       = len / 100.0; // 1 = 1m
+vec4 waterScatter(vec3 normal,vec3 camPos, vec3 wPos, vec3 color) {
+  // convert to meter
+  const float surface_pos = push.waterHeight / 100.0; // here we require the last tracked water intersection from the camera
+  const vec3  sunDir = scene.sunDir / 100.0;
+  const vec3  dir         = wPos-camPos;
+  const float len         = length(dir);
+  const float depth       = len; // 1 = 1m
   const vec3  ndir        = dir/length(dir);
   const float angle = 1.0 - acos(ndir.y) / M_PI;
 
-  const float camera_depth = (surface_pos-camPos.y) / 100.0;
-  float surface_depth = (surface_pos-wPos.y) / 100.0;
+  const float camera_depth = (surface_pos-camPos.y);
+  float surface_depth = (surface_pos-wPos.y);
   surface_depth = surface_depth < 0.0 ? 0.0 : surface_depth;
   // some assumptions:
   // 700 nm (red), 546.1 nm (green) and 435.8 nm (blue)
@@ -44,18 +49,19 @@ vec4 waterScatter(vec3 normal,vec3 camPos, vec3 wPos, vec3 dir, const float len,
   // Note: Sun currently not visible while underwater (bug)
   // Note: add caustics
   // Todo: Make caustic texture a sampler
+  // Todo: Check normals to reduce effect from below: or check sunlight
+  // Todo: Rework pos-surf transmittance to account for sunlight direction
 
-  const vec2 surface_sunpos = wPos.xz + scene.sunDir.xz * surface_depth * 100 / abs(scene.sunDir.y);
-  vec3 caustic = texelFetch(waterCaustic, ivec2((surface_sunpos.xy+vec2(0,0)   + scene.tickCount32 / 20.0)* 0.4) % ivec2(768,768), 0 ).rgb;
-  //caustic     *= texelFetch(waterCaustic, ivec2((surface_sunpos.xy+vec2(255,0) + scene.tickCount32 / 30.0)* 0.4) % ivec2(768,768), 0 ).rgb;
-  caustic     *= texelFetch(waterCaustic, ivec2((surface_sunpos.yx+vec2(375,0) - scene.tickCount32 / 20.0)* 0.4) % ivec2(768,768), 0 ).rgb;
-  //caustic     *= texelFetch(waterCaustic, ivec2((surface_sunpos.yx+vec2(444,0) - scene.tickCount32 / 30.0)* 0.4) % ivec2(768,768), 0 ).rgb;
-  //caustic      = exp(-1.0 + sqrt((caustic))) - exp(-1);
-  caustic      = 0.70+14*caustic;
+  const vec3 surface_sunpos = wPos.xyz + sunDir.xyz * surface_depth / abs(sunDir.y);
+  const float surface_sunpos_dist = length(surface_sunpos-wPos.xyz);
+  const vec3 posSunTransmittance = exp(-(surface_sunpos_dist * c));
+  vec3 caustic = texture(waterCaustic, vec2(surface_sunpos.xz * 0.05)).rgb;
+  caustic      = 0.66+13*caustic;
   caustic      = surface_depth < 1.0 ? surface_depth * caustic + (1-surface_depth).xxx : caustic;
-  caustic      = gl_GlobalInvocationID.x > 2000 ? vec3(1) : caustic;
+  //caustic      = gl_GlobalInvocationID.x > 2000 ? vec3(1) : caustic;
 
-  const vec3 background_transmittance = color * posSurfTransmittance * posCamTransmittance * scene.sunColor * scene.exposure * caustic;
+  const vec3 background_transmittance = color * posSunTransmittance * posCamTransmittance * scene.sunColor * scene.exposure * caustic;
+
   // scatter
   // Note: flat water gradient looked better with high scatter mult / deep with final mult
   // Note: cone shaped variant ends up with 1/3 height (ambient)
@@ -63,6 +69,7 @@ vec4 waterScatter(vec3 normal,vec3 camPos, vec3 wPos, vec3 dir, const float len,
   // Note: use correct light values, check exposure
   // Note: Check diffuse downdwelling coefficient to replace scatter_mult:
   //       https://onlinelibrary.wiley.com/doi/10.1111/cgf.15009
+  // Note: extend scatter into ddy noise texture sampling for godrays
   const float scatter_mult = 3.0;
   const float v = ndir.y == 0 ? -0.001 : -ndir.y * scatter_mult;
   const float x = depth;
@@ -71,6 +78,23 @@ vec4 waterScatter(vec3 normal,vec3 camPos, vec3 wPos, vec3 dir, const float len,
   scatter_intensity     +=  exp(-c * h_1);
   scatter_intensity     /= c * v + c;
   const vec3 scatter_light = scene.ambient * scene.exposure * 0.2 * scatter_intensity;
+
+  // sunray scatter
+  // make it move in texture steps instead of world steps
+  vec3 accum_sunrays = vec3(0.0);
+  int total_accum = 1;
+  for(int i = 20; i < 100; i++){
+    float sample_dist = 0.4 * i; // meter
+    if(sample_dist >= len) break;
+    vec3 current_pos                        = camPos+ndir*sample_dist;
+    float current_depth                     = (surface_pos-current_pos.y);
+    vec3 current_surface_sunpos             = current_pos.xyz + sunDir.xyz * current_depth / abs(sunDir.y);
+    float current_surface_sunpos_dist       = length(current_surface_sunpos-current_pos.xyz);
+    vec3 current_caustic                    = texture(waterCausticHR, vec2(current_surface_sunpos.xz * 0.05)).rgb;
+    accum_sunrays                          += current_caustic * exp(-c*(current_surface_sunpos_dist+sample_dist)); 
+    total_accum += 1;
+    }
+    accum_sunrays *= scene.sunColor * scene.exposure * (1.0/total_accum);
 
   // const float v2 = ndir.y == 0 ? -0.001 : -ndir.y;
   // const float h_2 = camera_depth; // * sundir
@@ -83,7 +107,7 @@ vec4 waterScatter(vec3 normal,vec3 camPos, vec3 wPos, vec3 dir, const float len,
   const vec3 posCamAmbTransmittance = exp(-(3 * depth * vec3(0.15,0.10,0.05)));
   const vec3 ambient_transmittance = color * posCamAmbTransmittance;
 
-  return vec4(background_transmittance+scatter_light, 1.0);
+  return vec4(background_transmittance+scatter_light+accum_sunrays, 1.0);
   }
 
 vec3 unproject(vec4 screen) {
@@ -97,16 +121,15 @@ void main(){
   const vec2  ndcPos    = (pos.xy * scene.screenResInv) * 2.0 - vec2(1.0);
   const float depth     = texelFetch(zbuffer,  pos, 0).r;
 
-  const vec3  camPos    = unproject(vec4(0.0, 0.0, 0.0, 1.0));
-  const vec3  wPos      = unproject(vec4(ndcPos.x, ndcPos.y, depth, 1.0));
+  // in m
+  const vec3  camPos    = unproject(vec4(0.0, 0.0, 0.0, 1.0)) / 100.0;
+  const vec3  wPos      = unproject(vec4(ndcPos.x, ndcPos.y, depth, 1.0)) / 100.0;
 
-  const vec3 wDir = wPos-camPos;
-  const float len = length(wPos-camPos);
+  //const vec3 wDir = wPos-camPos;
+  //const float len = length(wPos-camPos);
 
   vec3 color = texelFetch(in_color, pos, 0).rgb;
-  color = waterScatter(vec3(0.0 ,1.0 ,0.0), camPos, wPos, wDir, len, color).rgb;
-  //const vec3 wc         = texelFetch(waterCaustic,  pos % ivec2(768,768), 0).rgb;
-  //color = wc;
+  color = waterScatter(vec3(0.0 ,1.0 ,0.0), camPos, wPos, color).rgb;
   imageStore(out_color, pos, vec4(color,1.0));
 
  }

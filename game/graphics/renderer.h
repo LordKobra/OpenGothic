@@ -153,6 +153,8 @@ class Renderer final {
 
     struct Water {
       Tempest::Texture2d waterCaustic;
+      Tempest::Attachment waterCausticLayered;
+      Tempest::Attachment waterCausticLayeredHalfRes;
       } water;
 
     struct SSAO {

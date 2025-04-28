@@ -53,6 +53,7 @@ class Shaders {
 
     Tempest::RenderPipeline  underwaterT, underwaterS;
     Tempest::ComputePipeline underwaterC;
+    Tempest::RenderPipeline  prepareWater;
 
     Tempest::RenderPipeline  waterReflection, waterReflectionSSR;
 
