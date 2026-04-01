@@ -600,7 +600,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   drawRtsmDbg(cmd, *wview);
 
   cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
-  drawReflections(cmd, *wview);
+  if(!camera->isInWater())
+    drawReflections(cmd, *wview);
   if(camera->isInWater()) {
     cmd.setDebugMarker("Underwater");
     drawUnderwater(cmd, *wview, camera->getWaterHeight());

@@ -50,7 +50,10 @@ vec4 waterScatter(vec3 normal,vec3 camPos, vec3 wPos, vec3 color) {
   // Note: add caustics
   // Todo: Make caustic texture a sampler
   // Todo: Check normals to reduce effect from below: or check sunlight
+  // Todo: back color should consist of diffuse downdwelling sky + directed sunlight
   // Todo: Rework pos-surf transmittance to account for sunlight direction
+  // Todo: Mie Scattering? (yikes)
+  // Todo: Ani...Anisotropy
 
   const vec3 surface_sunpos = wPos.xyz + sunDir.xyz * surface_depth / abs(sunDir.y);
   const float surface_sunpos_dist = length(surface_sunpos-wPos.xyz);
@@ -94,6 +97,7 @@ vec4 waterScatter(vec3 normal,vec3 camPos, vec3 wPos, vec3 color) {
     accum_sunrays                          += current_caustic * exp(-c*(current_surface_sunpos_dist+sample_dist)); 
     total_accum += 1;
     }
+    // the total accum divide is completely wrong, i need to mult each segment wrt to interval area
     accum_sunrays *= scene.sunColor * scene.exposure * (1.0/total_accum);
 
   // const float v2 = ndir.y == 0 ? -0.001 : -ndir.y;
